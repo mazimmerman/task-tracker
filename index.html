@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>To-Do List</title>
+
+    <!-- CSS controls the appearance of the HTML below. -->
+    <style>
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        padding: 64px 20px;
+        background: #f5f3ee;
+        color: #25382f;
+        font-family: system-ui, sans-serif;
+      }
+      main {
+        max-width: 640px;
+        margin: 0 auto;
+        padding: 36px;
+        background: white;
+        border: 1px solid #deded5;
+        border-radius: 20px;
+      }
+      h1 { margin: 0 0 12px; font-size: 36px; }
+      p { color: #58655e; line-height: 1.6; }
+      label { display: block; margin: 28px 0 10px; font-weight: 600; }
+      .task-entry { display: flex; gap: 12px; }
+      input[type="text"] {
+        min-width: 0;
+        flex: 1;
+        padding: 14px;
+        border: 1px solid #adb8b0;
+        border-radius: 10px;
+        font: inherit;
+      }
+      button {
+        padding: 14px 20px;
+        border: 0;
+        border-radius: 10px;
+        background: #7c3aed;
+        color: white;
+        font: inherit;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      button:hover { background: #6d28d9; }
+      .filters { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 24px; }
+      .filters button { padding: 10px 14px; background: #f3eafa; color: #6d28d9; }
+      .filters button:hover { background: #e9d9f5; }
+      .filters button[aria-pressed="true"] { background: #7c3aed; color: white; }
+      input:focus-visible, button:focus-visible {
+        outline: 3px solid #a7caba;
+        outline-offset: 3px;
+      }
+      .empty-state {
+        margin-top: 28px;
+        padding-top: 20px;
+        border-top: 1px solid #e7e9e4;
+      }
+      #task-list { list-style: none; padding: 0; margin-top: 28px; }
+      #task-list li {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 14px 0;
+        border-bottom: 1px solid #e7e9e4;
+        overflow-wrap: anywhere;
+      }
+      #task-list li[hidden] { display: none; }
+      .task-label {
+        display: flex;
+        flex: 1;
+        min-width: 0;
+        align-items: center;
+        gap: 12px;
+        margin: 0;
+        font-weight: 400;
+        cursor: pointer;
+      }
+      .task-label input {
+        width: 20px;
+        height: 20px;
+        flex-shrink: 0;
+        accent-color: #7c3aed;
+      }
+      .completed span {
+        text-decoration: line-through;
+        color: #68716b;
+      }
+      .delete-button {
+        flex-shrink: 0;
+        padding: 10px 12px;
+        background: #f3eafa;
+        color: #6d28d9;
+      }
+      .delete-button:hover { background: #e9d9f5; }
+      @media (max-width: 480px) {
+        main { padding: 24px; }
+        h1 { font-size: 30px; }
+        .task-entry { flex-direction: column; }
+      }
+    </style>
+  </head>
+  <body>
+    <!-- HTML describes the page's content and structure. -->
+    <main>
+      <h1>To-Do List</h1>
+      <p>A little space to organize your day, one task at a time.</p>
+
+      <label for="task-input">What would you like to do?</label>
+      <form id="task-form" class="task-entry">
+        <input id="task-input" type="text" placeholder="For example, take a walk" required>
+        <button type="submit">Add Task</button>
+      </form>
+
+      <div class="filters" role="group" aria-label="Show tasks">
+        <button type="button" data-filter="all" aria-pressed="true">All (0)</button>
+        <button type="button" data-filter="active" aria-pressed="false">Active (0)</button>
+        <button type="button" data-filter="completed" aria-pressed="false">Completed (0)</button>
+      </div>
+      <p id="empty-state" class="empty-state" role="status">Your tasks will appear here.</p>
+      <ul id="task-list" aria-label="Tasks" aria-live="polite"></ul>
+      <p id="storage-message" role="status" hidden></p>
+    </main>
+
+    <!-- JavaScript makes the page respond to your actions. -->
+    <script>
+      const form = document.querySelector('#task-form');
+      const input = document.querySelector('#task-input');
+      const list = document.querySelector('#task-list');
+      const emptyState = document.querySelector('#empty-state');
+      const storageMessage = document.querySelector('#storage-message');
+      const storageKey = 'my-to-do-list.tasks.v1';
+      const filterButtons = document.querySelectorAll('[data-filter]');
+      const taskRows = new Map();
+      let selectedFilter = 'all';
+      let tasks = [];
+
+      // Load the saved list when you open or refresh this page.
+      try {
+        const saved = JSON.parse(localStorage.getItem(storageKey) || '[]');
+        if (!Array.isArray(saved) || !saved.every(task =>
+          task !== null && typeof task === 'object' &&
+          typeof task.text === 'string' && task.text.trim() !== '' &&
+          typeof task.completed === 'boolean'
+        )) throw new Error('Invalid saved tasks');
+        tasks = saved;
+      } catch (error) {
+        storageMessage.textContent = 'Your saved tasks could not be loaded. You can still use the list.';
+        storageMessage.hidden = false;
+      }
+
+      // Browser storage keeps a copy after each change.
+      function saveTasks() {
+        try {
+          localStorage.setItem(storageKey, JSON.stringify(tasks));
+          storageMessage.hidden = true;
+        } catch (error) {
+          storageMessage.textContent = 'Changes could not be saved. Keep this page open to retain your current list.';
+          storageMessage.hidden = false;
+        }
+      }
+
+      // Filters change what is visible; all tasks remain in the saved list.
+      function updateFilter() {
+        let visibleCount = 0;
+        taskRows.forEach((item, task) => {
+          const visible = selectedFilter === 'all' ||
+            (selectedFilter === 'active' && !task.completed) ||
+            (selectedFilter === 'completed' && task.completed);
+          item.hidden = !visible;
+          if (visible) visibleCount++;
+        });
+        // Count every saved task, including those hidden by the current filter.
+        const completedCount = tasks.filter(task => task.completed).length;
+        const counts = {
+          all: tasks.length,
+          active: tasks.length - completedCount,
+          completed: completedCount
+        };
+        const filterNames = { all: 'All', active: 'Active', completed: 'Completed' };
+        filterButtons.forEach(button => {
+          const filter = button.dataset.filter;
+          button.textContent = filterNames[filter] + ' (' + counts[filter] + ')';
+          button.setAttribute('aria-pressed', String(button.dataset.filter === selectedFilter));
+        });
+        emptyState.hidden = visibleCount > 0;
+        const messages = {
+          all: 'Your tasks will appear here.',
+          active: 'No active tasks.',
+          completed: 'No completed tasks yet.'
+        };
+        emptyState.textContent = messages[selectedFilter];
+      }
+
+      filterButtons.forEach(button => {
+        button.addEventListener('click', function () {
+          selectedFilter = button.dataset.filter;
+          updateFilter();
+        });
+      });
+
+      // Use the same function to display new tasks and restored tasks.
+      function displayTask(task) {
+        const item = document.createElement('li');
+        const label = document.createElement('label');
+        label.className = 'task-label';
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = task.completed;
+        item.classList.toggle('completed', task.completed);
+        const taskText = document.createElement('span');
+        taskText.textContent = task.text; // Display what you typed as plain text.
+
+        // Each checkbox remembers whether its own task is complete.
+        checkbox.addEventListener('change', function () {
+          task.completed = checkbox.checked;
+          item.classList.toggle('completed', checkbox.checked);
+          saveTasks();
+          updateFilter();
+          if (item.hidden) input.focus();
+        });
+
+        const deleteButton = document.createElement('button');
+        deleteButton.type = 'button';
+        deleteButton.className = 'delete-button';
+        deleteButton.textContent = 'Delete';
+        deleteButton.setAttribute('aria-label', 'Delete task: ' + task.text);
+
+        // This button removes only the task it belongs to.
+        deleteButton.addEventListener('click', function () {
+          tasks = tasks.filter(savedTask => savedTask !== task);
+          taskRows.delete(task);
+          item.remove();
+          saveTasks();
+          updateFilter();
+          input.focus();
+        });
+
+        label.appendChild(checkbox);
+        label.appendChild(taskText);
+        item.appendChild(label);
+        item.appendChild(deleteButton);
+        list.appendChild(item);
+        taskRows.set(task, item);
+      }
+
+      tasks.forEach(displayTask);
+      updateFilter();
+
+      // Submitting the form works with both the button and the Enter key.
+      form.addEventListener('submit', function (event) {
+        event.preventDefault(); // Keep the browser from reloading the page.
+        const text = input.value.trim();
+        if (text === '') return; // Don't add blank tasks.
+
+        const task = { text: text, completed: false };
+        tasks.push(task);
+        displayTask(task);
+        saveTasks();
+        // Show newly added active tasks even when viewing completed tasks.
+        if (selectedFilter === 'completed') selectedFilter = 'active';
+        updateFilter();
+
+        input.value = '';
+        input.focus();
+      });
+    </script>
+  </body>
+</html>
